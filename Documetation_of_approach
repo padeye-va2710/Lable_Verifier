@@ -1,0 +1,190 @@
+## Deployment Environment
+
+### AWS EC2 Deployment
+
+The prototype is deployed on Amazon Web Services (AWS) using an EC2 virtual machine.
+
+#### Instance Details
+
+| Component        | Value                   |
+| ---------------- | ----------------------- |
+| Cloud Provider   | AWS                     |
+| Service          | EC2                     |
+| Operating System | Ubuntu Server 24.04 LTS |
+| Instance Type    | t3.micro                |
+| Architecture     | x86_64                  |
+| Public Access    | HTTP                    |
+| Runtime          | Python 3.14             |
+| Web Server       | Uvicorn                 |
+| Process Manager  | Systemd                 |
+
+---
+
+### Application Architecture
+
+```text
+User Browser
+      │
+      ▼
+FastAPI Web Application
+      │
+      ├── Application Builder
+      ├── OCR Processing
+      ├── PDF Processing
+      ├── Validation Engine
+      └── Batch Processing
+               │
+               ▼
+       Validation Results
+```
+
+---
+
+### Deployment Objectives
+
+The deployment environment was intentionally designed to:
+
+* Minimize operational cost
+* Require no external cloud AI services
+* Run entirely within the server boundary
+* Demonstrate suitability for restricted government environments
+* Avoid outbound dependencies that could be blocked by agency firewalls
+
+This approach aligns with stakeholder concerns regarding security restrictions and network controls.
+
+---
+
+### Local Processing Design
+
+All processing occurs locally on the EC2 instance.
+
+No label images, forms, or OCR data are transmitted to third-party services.
+
+Processing components include:
+
+* Tesseract OCR
+* PyMuPDF
+* FastAPI
+* Validation Engine
+
+Benefits:
+
+* Reduced latency
+* No external API costs
+* No internet dependency
+* Improved privacy
+* Easier compliance review
+
+---
+
+### Performance Considerations
+
+One of the key stakeholder requirements was response time.
+
+A previous pilot reportedly required 30–40 seconds per label, leading users to abandon the system.
+
+This prototype was designed with the following goals:
+
+| Operation               | Target                            |
+| ----------------------- | --------------------------------- |
+| Single Image Validation | < 5 seconds                       |
+| Front + Back Label Set  | < 10 seconds                      |
+| PDF Processing          | < 10 seconds                      |
+| Batch Validation        | Scales linearly by document count |
+
+Performance depends primarily on:
+
+* Image resolution
+* OCR complexity
+* PDF size
+* Number of uploaded documents
+
+---
+
+### Service Configuration
+
+The application runs as a systemd-managed service.
+
+Example service configuration:
+
+```ini
+[Unit]
+Description=Alcohol Label Verification App
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/opt/label-verifier
+Environment=PYTHONPATH=/opt/label-verifier
+ExecStart=/opt/label-verifier/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Benefits:
+
+* Automatic startup on reboot
+* Process monitoring
+* Automatic restart on failure
+* Centralized logging via journalctl
+
+---
+
+### Monitoring and Troubleshooting
+
+Application logs are available through:
+
+```bash
+journalctl -u label-verifier -f
+```
+
+Service status:
+
+```bash
+systemctl status label-verifier
+```
+
+Recent logs:
+
+```bash
+journalctl -u label-verifier -n 100
+```
+
+---
+
+### Security Considerations
+
+Because this prototype is intended as a proof-of-concept:
+
+* No user authentication was implemented
+* No persistent database is used
+* Uploaded files are processed temporarily
+* Data is not retained after processing
+
+For a production deployment, recommended enhancements include:
+
+* Authentication and authorization
+* HTTPS/TLS
+* Audit logging
+* Role-based access control
+* Secure file retention policies
+* FedRAMP-aligned infrastructure controls
+
+---
+
+### Future Scalability
+
+The application architecture supports future migration to:
+
+* AWS ECS
+* AWS EKS
+* Azure App Services
+* Kubernetes
+* Government cloud environments
+
+Because the OCR and validation engines are self-contained services, they can be horizontally scaled as workload increases.
+
+This design supports future growth while maintaining the core validation workflow developed in the prototype.
+
