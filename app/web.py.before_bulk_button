@@ -1,0 +1,183 @@
+HTML = """
+<!doctype html><html><head><title>Label Verifier</title>
+<style>
+body{font-family:Arial;margin:32px;max-width:1200px}
+input,textarea,button,select{width:100%;margin:8px 0;padding:10px;box-sizing:border-box}
+table{border-collapse:collapse;width:100%;margin-top:16px}
+td,th{border:1px solid #ccc;padding:8px;text-align:left}
+.match{background:#e7f7e7}.mismatch{background:#ffe8e8}.review{background:#fff6d5}
+.filebox{border:1px solid #ccc;padding:12px;margin-top:18px}
+pre{white-space:pre-wrap}
+.formgrid{display:grid;grid-template-columns:220px 1fr;gap:8px 14px;align-items:center}
+.section{border:1px solid #ddd;padding:16px;margin:18px 0;background:#fafafa}
+.checkrow{display:grid;grid-template-columns:30px 1fr;gap:8px;align-items:center;margin:6px 0}
+.checkrow input{width:auto;margin:0}
+.small{font-size:13px;color:#555}
+</style>
+</head><body>
+
+<h1>Alcohol Label Verification Prototype</h1>
+<p>Upload one label image, multiple label images, or paste OCR text for faster testing.</p>
+
+<div class="section">
+<h2>Application Builder</h2>
+
+<div class="formgrid">
+<label>Product Category</label>
+<select id="product_category" onchange="applyCategoryDefaults(); buildApplication();">
+<option value="wine">Wine</option>
+<option value="beer">Beer / Malt Beverage</option>
+<option value="spirits" selected>Distilled Spirits</option>
+</select>
+
+<label>Brand Name</label><input type="text" id="brand_name" value="Maker's Mark">
+<label>Class / Type</label><input type="text" id="class_type" value="Kentucky Straight Bourbon Whisky">
+<label>Alcohol Content (% ABV)</label><input type="number" id="alcohol_content" step="0.01" value="45">
+<label>Net Contents</label><input type="text" id="net_contents" value="1 L">
+<label>Producer / Bottler</label><input type="text" id="producer_name" value="Maker's Mark Distillery Inc.">
+<label>Country of Origin</label><input type="text" id="country_of_origin" value="United States">
+<label>Appellation / Region</label><input type="text" id="appellation" value="">
+<label>Vintage</label><input type="text" id="vintage" value="">
+</div>
+
+<h3>Required Compliance Elements</h3>
+<div class="checkrow"><input type="checkbox" id="government_warning" checked><label>Government Warning Required</label></div>
+<div class="checkrow"><input type="checkbox" id="abv_required" checked><label>ABV Required / Declared</label></div>
+<div class="checkrow"><input type="checkbox" id="sulfites_required"><label>Sulfites Declaration Required</label></div>
+<div class="checkrow"><input type="checkbox" id="producer_required" checked><label>Producer / Bottler Information Required</label></div>
+<div class="checkrow"><input type="checkbox" id="origin_required"><label>Country of Origin Required</label></div>
+<div class="checkrow"><input type="checkbox" id="organic_required"><label>Organic Claims Present / Require Review</label></div>
+<div class="checkrow"><input type="checkbox" id="formula_review_required"><label>Formula Approval Review Required</label></div>
+
+<details><summary>Show generated application JSON</summary><pre id="jsonpreview"></pre></details>
+</div>
+
+<div class="section">
+<h2>Label Upload</h2>
+<label>Label image or images</label>
+<input type="file" id="images" accept="image/*" multiple>
+
+<label>Optional pasted label text, bypasses OCR for single-label testing</label>
+<textarea id="labeltext" rows="8"></textarea>
+
+<button onclick="run()">Validate Label</button>
+</div>
+
+<div id="out"></div>
+
+<script>
+function applyCategoryDefaults(){
+ const category = document.getElementById('product_category').value;
+
+ if(category === 'spirits'){
+   document.getElementById('abv_required').checked = true;
+   document.getElementById('sulfites_required').checked = false;
+   document.getElementById('organic_required').checked = false;
+   document.getElementById('producer_required').checked = true;
+   document.getElementById('government_warning').checked = true;
+ }
+
+ if(category === 'wine'){
+   document.getElementById('abv_required').checked = true;
+   document.getElementById('sulfites_required').checked = true;
+   document.getElementById('producer_required').checked = true;
+   document.getElementById('government_warning').checked = true;
+ }
+
+ if(category === 'beer'){
+   document.getElementById('abv_required').checked = false;
+   document.getElementById('sulfites_required').checked = false;
+   document.getElementById('organic_required').checked = false;
+   document.getElementById('producer_required').checked = true;
+   document.getElementById('government_warning').checked = true;
+ }
+}
+
+function buildApplication(){
+ const alcoholRaw = document.getElementById('alcohol_content').value;
+ const app = {
+   product_category: document.getElementById('product_category').value,
+   brand_name: document.getElementById('brand_name').value.trim(),
+   class_type: document.getElementById('class_type').value.trim(),
+   alcohol_content: alcoholRaw === '' ? null : parseFloat(alcoholRaw),
+   net_contents: document.getElementById('net_contents').value.trim(),
+   producer_name: document.getElementById('producer_name').value.trim(),
+   country_of_origin: document.getElementById('country_of_origin').value.trim(),
+   appellation: document.getElementById('appellation').value.trim(),
+   vintage: document.getElementById('vintage').value.trim(),
+   government_warning_required: document.getElementById('government_warning').checked,
+   abv_required: document.getElementById('abv_required').checked,
+   sulfites_required: document.getElementById('sulfites_required').checked,
+   producer_required: document.getElementById('producer_required').checked,
+   origin_required: document.getElementById('origin_required').checked,
+   organic_required: document.getElementById('organic_required').checked,
+   formula_review_required: document.getElementById('formula_review_required').checked
+ };
+ document.getElementById('jsonpreview').textContent = JSON.stringify(app,null,2);
+ return app;
+}
+
+function renderSummary(data){
+ if(!data.summary){return '';}
+ return `<div class="section">
+   <strong>Summary:</strong>
+   Matches: ${data.summary.matches} |
+   Mismatches: ${data.summary.mismatches} |
+   Reviews: ${data.summary.reviews}
+ </div>`;
+}
+
+function renderResult(title, data){
+ let html=`<div class="filebox"><h2>${title}</h2>`;
+ html += renderSummary(data);
+ if(data.ocr_text){ html+=`<h3>Extracted OCR Text</h3><pre>${data.ocr_text}</pre>`; }
+ html+='<table><tr><th>Field</th><th>Application</th><th>Label</th><th>Status</th><th>Confidence</th><th>Rule</th></tr>';
+ for(const r of data.results){
+   html+=`<tr class="${r.status}"><td>${r.field}</td><td>${r.application??''}</td><td>${r.label??''}</td><td>${r.status}</td><td>${r.confidence}</td><td>${r.rule}</td></tr>`;
+ }
+ html+='</table><pre>'+JSON.stringify(data.summary,null,2)+'</pre></div>';
+ return html;
+}
+
+async function run(){
+ const fd=new FormData();
+ const app = buildApplication();
+ const pasted=document.getElementById('labeltext').value;
+ const files=document.getElementById('images').files;
+
+ fd.append('application_json', JSON.stringify(app));
+
+ let html='<h2>Results</h2>';
+
+ if(files.length > 1){
+   html += '<p class="small">Processing batch. OCR may take several seconds for large images.</p>';
+   document.getElementById('out').innerHTML = html;
+
+   for(const file of files){ fd.append('images', file); }
+
+   const res=await fetch('/batch-validate',{method:'POST',body:fd});
+   const data=await res.json();
+
+   if(data.error){ document.getElementById('out').innerHTML='<pre>'+data.error+'</pre>'; return; }
+
+   html='<h2>Results</h2>';
+   for(const item of data.batch_results){ html += renderResult(item.filename, item); }
+ } else {
+   fd.append('label_text', pasted);
+   if(files.length === 1){ fd.append('image', files[0]); }
+
+   const res=await fetch('/validate',{method:'POST',body:fd});
+   const data=await res.json();
+
+   if(data.error){ document.getElementById('out').innerHTML='<pre>'+data.error+'</pre>'; return; }
+
+   html += renderResult('Single Label', data);
+ }
+
+ document.getElementById('out').innerHTML=html;
+}
+
+document.querySelectorAll('input,textarea,select').forEach(el => el.addEventListener('input', buildApplication));
+document.addEventListener('DOMContentLoaded', function(){ applyCategoryDefaults(); buildApplication(); });
+</script></body></html>
+"""

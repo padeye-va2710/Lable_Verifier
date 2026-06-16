@@ -1,0 +1,134 @@
+import re
+from dataclasses import dataclass
+from difflib import SequenceMatcher
+from typing import Dict, Any, Optional
+
+STANDARD_WARNING = (
+    "GOVERNMENT WARNING: (1) ACCORDING TO THE SURGEON GENERAL, WOMEN SHOULD NOT "
+    "DRINK ALCOHOLIC BEVERAGES DURING PREGNANCY BECAUSE OF THE RISK OF BIRTH DEFECTS. "
+    "(2) CONSUMPTION OF ALCOHOLIC BEVERAGES IMPAIRS YOUR ABILITY TO DRIVE A CAR OR OPERATE "
+    "MACHINERY, AND MAY CAUSE HEALTH PROBLEMS."
+)
+
+
+def normalize_loose(value: str) -> str:
+    value = value or ""
+    value = value.upper()
+    value = re.sub(r"[^A-Z0-9]+", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def normalize_warning(value: str) -> str:
+    value = value or ""
+    value = value.upper()
+    value = re.sub(r"[^A-Z0-9]+", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
+
+def fuzzy_score(a: str, b: str) -> float:
+    left = normalize_loose(a)
+    right = normalize_loose(b)
+    if not left or not right:
+        return 0.0
+    if left in right or right in left:
+        return 100.0
+    return round(SequenceMatcher(None, left, right).ratio() * 100, 2)
+
+
+def extract_abv(text: str) -> Optional[float]:
+    patterns = [
+        r"(\d+(?:\.\d+)?)\s*%\s*(?:ALC\.?\s*/?\s*VOL\.?|ALC\.?\s*VOL\.?|ABV)",
+        r"(\d+(?:\.\d+)?)\s*%\s*(?:ALCOHOL\s*/?\s*VOLUME|ALCOHOL\s+BY\s+VOLUME)",
+        r"ALCOHOL\s+(?:BY\s+VOLUME\s+)?(\d+(?:\.\d+)?)\s*%",
+        r"(\d+(?:\.\d+)?)\s*%\s*BY\s*VOL\.?",
+        r"ALC\.?\s*(\d+(?:\.\d+)?)\s*%\s*(?:BY\s*)?VOL\.?",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, text or "", re.IGNORECASE)
+        if match:
+            return float(match.group(1))
+
+    proof = re.search(
+        r"(\d+(?:\.\d+)?)\s*PROOF",
+        text or "",
+        re.IGNORECASE
+    )
+
+    if proof:
+        return float(proof.group(1)) / 2
+
+    return None
+
+def extract_net_contents(text: str) -> Optional[str]:
+    match = re.search(r"(\d+(?:\.\d+)?)\s*(ML|L|LITER|LITERS)", text or "", re.IGNORECASE)
+    if not match:
+        return None
+    amount = match.group(1)
+    if '.' in amount:
+        amount = amount.rstrip('0').rstrip('.')
+    unit = match.group(2).upper()
+    if unit in {"LITER", "LITERS"}:
+        unit = "L"
+    return f"{amount} {unit}"
+
+
+def contains_warning(text: str) -> bool:
+    return normalize_warning(STANDARD_WARNING) in normalize_warning(text or "")
+
+
+def validate_label(application: Dict[str, Any], label_text: str) -> Dict[str, Any]:
+    results = []
+
+    brand_expected = application.get("brand_name", "")
+    brand_score = fuzzy_score(brand_expected, label_text)
+    results.append({
+        "field": "Brand Name",
+        "application": brand_expected,
+        "label": "found in label text" if brand_score >= 80 else "not confidently found",
+        "status": "match" if brand_score >= 80 else "review",
+        "confidence": brand_score,
+        "rule": "Loose/fuzzy match because capitalization and punctuation may vary."
+    })
+
+    expected_abv = application.get("alcohol_content")
+    label_abv = extract_abv(label_text)
+    abv_ok = False
+    if expected_abv is not None and label_abv is not None:
+        abv_ok = abs(float(expected_abv) - label_abv) < 0.05
+    results.append({
+        "field": "Alcohol Content",
+        "application": expected_abv,
+        "label": label_abv,
+        "status": "match" if abv_ok else "mismatch",
+        "confidence": 100 if abv_ok else 0,
+        "rule": "Numeric ABV must match. Proof is converted to ABV when found."
+    })
+
+    expected_net = application.get("net_contents", "")
+    label_net = extract_net_contents(label_text)
+    net_ok = normalize_loose(expected_net) == normalize_loose(label_net or "")
+    results.append({
+        "field": "Net Contents",
+        "application": expected_net,
+        "label": label_net,
+        "status": "match" if net_ok else "mismatch",
+        "confidence": 100 if net_ok else 0,
+        "rule": "Normalized exact match."
+    })
+
+    warning_ok = contains_warning(label_text)
+    results.append({
+        "field": "Government Warning",
+        "application": "Standard warning required",
+        "label": "present" if warning_ok else "missing or altered",
+        "status": "match" if warning_ok else "mismatch",
+        "confidence": 100 if warning_ok else 0,
+        "rule": "Strict text check. This field should not be fuzzy-matched."
+    })
+
+    summary = {
+        "matches": sum(r["status"] == "match" for r in results),
+        "mismatches": sum(r["status"] == "mismatch" for r in results),
+        "reviews": sum(r["status"] == "review" for r in results),
+    }
+    return {"summary": summary, "results": results}
